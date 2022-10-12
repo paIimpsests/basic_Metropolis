@@ -6,15 +6,15 @@
 # WHAT DO WE NEED ?
 
 - [x] Globally define a 2D box of given size --- Generalized to 3D
-- [] Generate a suitable starting configuration --- ask Frank about that
+- Generate a suitable starting configuration --- ask Frank about that
 - [x] Read starting configuration from a file
 - [x] Function to calculate "energy" of a given particle --- atm only check for overlap
 - [x] Function to correctly write positions of particles to a file in the same fashion of Frank's visualization code
-- [] Function to attempt to move a particle --- must call writeCoords(), changeCoords(), overlapCheck()
+- Function to attempt to move a particle --- must call writeCoords(), changeCoords(), overlapCheck()
 - [x] Random number generation --- meh... ask Frank about that it properly
-- [] Function to randomly select a particle
-- [] What kind of small displacement to use ?
-- [] How many cycles of moving attemps before writing the new system configuration ? --- chose arbitrarily, depends on number of particles and displacement size
+- Function to randomly select a particle
+- What kind of small displacement to use ?
+- How many cycles of moving attemps before writing the new system configuration ? --- chose arbitrarily, depends on number of particles and displacement size
 
 # NOTES :
 
