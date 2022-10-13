@@ -11,19 +11,21 @@
  *      for overlap
  * (o)  Function to correctly write positions of particles to a file in the
  *      fashion of Frank's visualization code --- be careful with extensions
- *  -   Function to attempt to move a particle --- WIP
- * (o)  Random number generation --- implemented using mt19937ar.c
+ * (o)  Function to attempt to move a particle --- works as intended with
+ *      delta in [-0.5 ; 0.5[
+ * (o)  Random number generation --- removed previous implementation, now uses
+ *      mt19937ar.c
  * (o)  Function to check for overlap with the whole system
  * (o)  Function to randomly select a particle --- already implemented in
  *      moveAttempt()
- *  -   What kind of small displacement to use ? --- depends on box size, radii,
- *      see Frenkel & Smit 3.2.2. Boundary Conditions
+ *  -   What kind of small displacement to use ? --- depends on system density,
+ *      see Frenkel & Smit 3.1.1. Translational moves
  *  -   How many cycles of moving attemps before writing the new system
  *      configuration ? --- chose arbitrarily, depends on number of particles
  *      and displacement size
  *  -   Implement the same using a cell list (makes it faster)
- *  -   How to deal with box borders ? 
- *  -   Follow up : implement periodic boundary conditions
+ * (o)  Implement PBC
+ * (o)  Implement nearest image convention for overlap computations
  *
  *  NOTES :
  *  -------
@@ -47,28 +49,26 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdint.h>
-#include <inttypes.h>
-#include <time.h>
-#include <math.h>
+#include <math.h>       // need to compile with `-lm` flag
 #include "mt19937ar.c"
 
-#define MAX_SIZE 100
-#define X_LENGTH 10.034544
-#define Y_LENGTH 10.034544
+#define MAX_SIZE 2
+#define X_LENGTH 5
+#define Y_LENGTH 5
 #define Z_LENGTH 1
 
-typedef struct Disk Disk;
-struct Disk
+typedef struct Sphere Sphere;
+struct Sphere
 {
-	double x;	// x position of the center of the disk	
-	double y;	// y position of the center of the disk
-        double z;       // z position of the center of the disk
-	double r;	// radius of the disk
+	double x;	// x position of the center of the sphere
+	double y;	// y position of the center of the sphere
+        double z;       // z position of the center of the sphere
+	double r;	// radius of the sphere
         char type;      // particle type --- for visualization purposes only
 
 };
 
-int overlapCheck(Disk *disk1, Disk *disk2)
+int overlapCheck(Sphere *sphere1, Sphere *sphere2)
 {
         /*
          * Function:    overlapCheck
@@ -77,40 +77,47 @@ int overlapCheck(Disk *disk1, Disk *disk2)
          * distance between their centers and comparing it to the sum of their
          * radii
          *
-         * *disk1:      pointer to the data relative to the first particle
-         * *disk2:      pointer to the data relative to the second particle
+         * *sphere1:      pointer to the data relative to the first particle
+         * *sphere2:      pointer to the data relative to the second particle
          *
          * return:      1 is there is overlap, 0 if not
          */
-	int overlap = 1;
-	if (((disk1->x - disk2->x) * (disk1->x - disk2->x) + (disk1->y - disk2->y) * (disk1->y - disk2->y) + (disk1->z - disk2->z) * (disk1->z - disk2->z)) < ((disk1->r + disk2->r) * (disk1->r + disk2->r)))
-		overlap = 0;
+
+	int overlap = 0;
+	if ( ( (sphere1->x - sphere2->x) * (sphere1->x - sphere2->x)
+               + (sphere1->y - sphere2->y) * (sphere1->y - sphere2->y)
+               + (sphere1->z - sphere2->z) * (sphere1->z - sphere2->z)
+             )
+           < ( (sphere1->r + sphere2->r) * (sphere1->r + sphere2->r) )
+           )
+	        overlap = 1;
 	return overlap;
 }
 
-int overlapCheckGlobal(Disk **disks, Disk *sample, int n)
+int overlapCheckGlobal(Sphere **spheres, Sphere *sample, int n)
 {
         /* Function:    overlapCheckGlobal
          * -------------------------------
          *  Checks for overlap between one given particle and the rest of the
          *  system
          *
-         *  **disks:    pointer to a pointer to the data of the system
+         *  **spheres:  pointer to a pointer to the data of the system
+         *  *sample:    pointer to the data to check overlap for
          *  n:          location of the particle that we want to check overlap
          *              for, 0 <= n <= 99
          *
          *  return:     1 if there is overlap, 0 if not
          */
         int overlap = 0, i = 0;
-        while ((overlap == 0) && (i < MAX_SIZE))
+        while ((overlap == 0) && (i < MAX_SIZE - 1))
         {
-                overlap = !(i == n) * overlapCheck(sample, disks[i]);
+                overlap = (i != n) * overlapCheck(sample, spheres[i]);
                 i++;
         }
         return overlap;
 }
 
-void changeCoords(Disk *disk, double x, double y, double z)
+void changeCoords(Sphere *sphere, double x, double y, double z)
 {
         /*
          * Function:    changeCoords
@@ -124,12 +131,12 @@ void changeCoords(Disk *disk, double x, double y, double z)
          * z:           new z position of the particle
          *
          */
-	disk->x = x;
-	disk->y = y;
-        disk->z = z;
+	sphere->x = x;
+	sphere->y = y;
+        sphere->z = z;
 }
 
-void readInit(char *filename, Disk **disks)
+void readInit(char *filename, Sphere **spheres)
 {
         /*
          * Function:    readInit
@@ -137,11 +144,11 @@ void readInit(char *filename, Disk **disks)
          * Initializes the table of data of all MAX_SIZE particles by reading
          * it from a user supplied .txt file
          * NB1: Some parameters (total number of particles and box size) from
-         * the initialization .txt file must match those defined here
+         * the initialization .sph file must match those defined here
          * NB2: Reading is done only for files with typesetting indicated above
          *
          * *filename:   pointer to the name of the initialization .txt file
-         * **disks:     pointer to the pointer to the table of particles data
+         * **spheres:   pointer to the pointer to the table of particles data
          *
          */
         FILE *initfile = NULL;
@@ -156,7 +163,7 @@ void readInit(char *filename, Disk **disks)
                 {
                         for (i = 0; i < MAX_SIZE; i++)
                         {
-                             fscanf(initfile, "%c %lf %lf %lf %lf%*c", &disks[i]->type, &disks[i]->x, &disks[i]->y, &disks[i]->z, &disks[i]->r);
+                             fscanf(initfile, "%c %lf %lf %lf %lf%*c", &spheres[i]->type, &spheres[i]->x, &spheres[i]->y, &spheres[i]->z, &spheres[i]->r);
                         }
 
                 }
@@ -166,17 +173,17 @@ void readInit(char *filename, Disk **disks)
         }
 }
 
-void writeCoords(char *filename, Disk **disks)
+void writeCoords(char *filename, Sphere **spheres)
 {
         /*
          * Function:    writeCoords
          * -------------------------
          * Writes the position, radius, and type data for all MAX_SIZE
-         * particles in a .txt file
+         * particles in a .sph file
          * NB: Writing is done using the typesetting indicated above
          *
-         * *filename:   pointer to the name of the initialization .txt file
-         * **disks:     pointer to the pointer to the table of particles data
+         * *filename:   pointer to the name of the initialization .sph file
+         * **spheres:     pointer to the pointer to the table of particles data
          */
         FILE *outfile = NULL;
         int i = 0;
@@ -186,134 +193,85 @@ void writeCoords(char *filename, Disk **disks)
                 fprintf(outfile, "&%d\n", MAX_SIZE);
                 fprintf(outfile, "%d %d %d\n", (int)X_LENGTH, (int)Y_LENGTH, (int)Z_LENGTH);
                 for (i = 0; i < MAX_SIZE; i++)
-                        fprintf(outfile, "%c %lf %lf %lf %lf\n", disks[i]->type, disks[i]->x, disks[i]->y, disks[i]->z, disks[i]->r);
-
+                        fprintf(outfile, "%c %lf %lf %lf %lf\n", spheres[i]->type, spheres[i]->x, spheres[i]->y, spheres[i]->z, spheres[i]->r);
+                fclose(outfile);
         }
 }
 
-double gendouble(int *pseed)
-{
-        /*
-         * Function:    gendouble
-         * ----------------------
-         * Random generator wrapper for a double in [0,1[, it also resets the
-         * speed from the randomly generated number
-         * It employs the mt19937ar.c generator based on the Mersenne Twister
-         * algorithm
-         *
-         * *pseed:      pointer to the seed for the generator
-         *
-         * return: randomly generated double in [0,1[
-         */
-        double m = genrand(), n = 0.0f;       
-        *pseed = (int) m * 1000000;
-        n = genrand();
-        *pseed = (int) n * 1000000;
-        return n > 0.5 ? m : -m;
-}
 
-void moveAttempt(Disk **disks, int *pseed)
+void moveAttempt(Sphere **spheres)
 {
         /*
          * Function: moveAttempt                
-         * |
-         * | WARNING: implementation not finished - unsure if working as intended atm
-         * |
          * ---------------------
          * Tries to move a randomly selected particle in space by a small amount
          * and checks for overlap
          * If there is no overlap, overwrites the previous particle position
          * with the new one
          *
-         * *disk:       pointer to the data relevant for a given particle
-         * *pseed:      pointer to the seed for the random number generator
+         * **sphere:    pointer to a pointer to the data relevant for a given
+         *              particle
          */ 
-        double delta[3] = {gendouble(pseed) / 100, gendouble(pseed) / 100, gendouble(pseed) / 100};
-        int n = abs((int) (gendouble(pseed) * 1000000) % 100);
-        Disk bufferDisk = {disks[n]->x + delta[0], disks[n]->y + delta[1], disks[n]->z + delta[2], disks[n]->r, disks[n]->type}, *pBufferDisk = NULL;
-        pBufferDisk = &bufferDisk;
-        printf("%lf\n", delta[0]);
-        printf("%lf\n", delta[1]);
-        printf("%lf\n", delta[2]);
-        printf("%lf\n", bufferDisk.x);
-        printf("%lf\n", bufferDisk.y);
-        printf("%lf\n", bufferDisk.z);
-        printf("%lf\n", bufferDisk.r);
-        printf("%c\n", bufferDisk.type);
-        printf("n = %d\n", n);
-
-        if (!overlapCheckGlobal(disks, pBufferDisk, n))
+        double delta[3] = {genrand() - 0.5, genrand() - 0.5, genrand() - 0.5};
+        int n = (int) (genrand() * MAX_SIZE);
+        Sphere  bufferSphere = {        fmod((spheres[n]->x + delta[0]) + 2 * X_LENGTH, X_LENGTH),
+                                        fmod((spheres[n]->y + delta[1]) + 2 * Y_LENGTH, Y_LENGTH),
+                                        fmod((spheres[n]->z) + 2 * Z_LENGTH, Z_LENGTH),
+                                        spheres[n]->r,
+                                        spheres[n]->type
+                                },
+                *pBufferSphere = NULL;
+        pBufferSphere = &bufferSphere;
+        if (!overlapCheckGlobal(spheres, pBufferSphere, n))
         {
-                disks[n]->x = bufferDisk.x;
-                disks[n]->y = bufferDisk.y;
-                disks[n]->z = bufferDisk.z;
-                printf("It moves !\n");
+                spheres[n]->x = bufferSphere.x;
+                spheres[n]->y = bufferSphere.y;
+                spheres[n]->z = bufferSphere.z;
         }
-        printf("%lf\n", disks[n]->x);
-        printf("%lf\n", disks[n]->y);
-        printf("%lf\n", disks[n]->z);
-        printf("%lf\n", disks[n]->r);
-        printf("%c\n", disks[n]->type);
 }
 
 
 
 int main(int argc, char *argv[])
 {
-        srand(time(NULL));
-        int i = 0, n = 0, p = 0, seed = 0, *pseed = &seed;
-        double m = 0.0f;
-        Disk *disks = malloc(MAX_SIZE * sizeof(Disk));
-        Disk **pdisks = malloc(MAX_SIZE * sizeof(Disk));
+        init_genrand(2467109);
+        int i = 0, n = 0;
+        Sphere *spheres = malloc(MAX_SIZE * sizeof(Sphere));
+        Sphere **pSpheres = malloc(MAX_SIZE * sizeof(Sphere));
         for (int i = 0; i < MAX_SIZE; ++i)
-                pdisks[i] = disks+i;
+                pSpheres[i] = spheres+i;
        
-        // Initialization of the random number generator
-        *pseed = rand();
-        init_genrand(*pseed);
-
         /*
         for (i = 0; i < 100; i++)
         {
-                n = abs((int) (gendouble(pseed) * 1000000) % 100);
-                if (overlapCheckGlobal(pdisks, n))
+                n = abs((int) (genrand() * MAX_SIZE));
+                if (overlapCheckGlobal(pSpheres, pSpheres[n], n))
                         printf("There is no overlap ! (as should be) (also n = %d)\n", n);
                 else
                         printf("There is overlap, and it shouldn't ... (also n = %d)\n", n);
 
-        } 
+        }
         */
 
-        // Initialization of the disks coordinates one by one
+        // Initialization of the spheres coordinates one by one
         /*
-        disks[0] = (Disk) {0.0f, 0.0f, 1.0f};
-        disks[1] = (Disk) {0.0f, 1.9f, 1.0f};
+        spheres[0] = (Sphere) {0.0f, 0.0f, 1.0f};
+        spheres[1] = (Sphere) {0.0f, 1.9f, 1.0f};
         for (int i = 0; i < MAX_SIZE; i++)
-               disks[i] = (Disk) {0.0f, 0.0f, 1.0f};
+               spheres[i] = (Sphere) {0.0f, 0.0f, 1.0f};
         */
 
-        readInit("init.sph", pdisks);
-        //writeCoords("coords.sph", pdisks);
-        
+        // Checks for moveAttempt()
+        readInit("init.sph", pSpheres);
+        writeCoords("coords.sph", pSpheres);
+        for (i = 0; i < 100; i++)
+        {
+                moveAttempt(pSpheres);        
+                writeCoords("coords.sph", pSpheres);
+        }
 
-        moveAttempt(pdisks, pseed);
-
-        // Simple tests for overlap check
-        /*
-	if (overlapCheck(pdisks[0], pdisks[1]))
-		printf("Il n'y a pas d'overlap !\n");
-	else
-		printf("Il y a overlap !\n");
-
-	changeCoords(pdisks[1], 2.0f, 2.0f, 2.0f);
-	if (overlapCheck(pdisks[0], pdisks[1]))
-		printf("Il n'y a pas d'overlap !\n");
-	else
-		printf("Il y a overlap !\n");
-        */ 
-
-        free(disks);
-        free(pdisks);
+        free(spheres);
+        free(pSpheres);
         return 0;
 }
 
