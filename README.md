@@ -14,15 +14,13 @@
 - [x] Function to randomly select a particle --- already implemented in moveAttempt()
 - [x] Implement periodic boundary conditions
 - [x] Implement nearest image convention for overlap computations
-- Generate a suitable starting configuration --- need a proper independent generator for that, keep reading from init file in main
+- [x] Generate a suitable starting configuration --- Done for SC, will make a standalone generator at a later time
 - What kind of small displacement to use ? --- depends on box size, radii, see Frenkel & Smit 3.2.2. Boundary Conditions
 - How many cycles of moving attemps before writing the new system configuration ? --- chose arbitrarily, depends on number of particles and displacement size
+- Implement general use of dimensionless variables
+- Implement volume moves, i.e. working at constant pressure/in isobaric isothermal ensemble
 - Implement the same using a cell list (makes it faster)
 
-# NOTES :
-
-- We want to restrict to 2D systems --- let z = 1 for all particles
-  
 # TYPESETTING FOR ALL ASSOCIATED .sph FILES :
 
 ```txt

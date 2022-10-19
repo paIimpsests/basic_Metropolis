@@ -5,7 +5,8 @@
  * WHAT DO WE NEED ?
  * -----------------
  * (o)  Globally define a 2D box of given size --- Generalized to 3D
- *  -   Generate a suitable starting configuration --- start w/ SC
+ * (o)  Generate a suitable starting configuration --- Implemented for SC,
+ *      will remove at a later time 
  * (o)  Read starting configuration from a file
  * (o)  Function to calculate "energy" of a given particle --- atm only check
  *      for overlap
@@ -27,11 +28,7 @@
  * (o)  Implement PBC
  * (o)  Implement nearest image convention for overlap computations
  *
- *  NOTES :
- *  -------
- *  - We want to restrict to 2D systems --- let z = 1 for all particles 
- *
- *  TYPESETTING FOR ALL ASSOCIATED .TXT FILES :
+ *  TYPESETTING FOR ALL ASSOCIATED .SPH FILES :
  *  -------------------------------------------
  *  """
  *  &N
@@ -52,10 +49,10 @@
 #include <math.h>       // need to compile with `-lm` flag
 #include "mt19937ar.c"
 
-#define MAX_SIZE 100
-#define X_LENGTH 11.034544
-#define Y_LENGTH 11.034544
-#define Z_LENGTH 1.0
+#define MAX_SIZE 1000
+#define X_LENGTH 11.0f
+#define Y_LENGTH 11.0f
+#define Z_LENGTH 11.0f
 
 typedef struct Sphere Sphere;
 struct Sphere
@@ -110,7 +107,7 @@ int overlapCheckGlobal(Sphere **spheres, Sphere *sample, int n)
          *  **spheres:  pointer to a pointer to the data of the system
          *  *sample:    pointer to the data to check overlap for
          *  n:          location of the particle that we want to check overlap
-         *              for, 0 <= n <= 99
+         *              for, 0 <= n <= MAX_SIZE - 1
          *
          *  return:     1 if there is overlap, 0 if not
          */
@@ -201,7 +198,7 @@ void moveAttempt(Sphere **spheres)
         int n = (int) (genrand() * MAX_SIZE);
         Sphere  bufferSphere = {        fmod((spheres[n]->x + delta[0]) + 2 * X_LENGTH, X_LENGTH),
                                         fmod((spheres[n]->y + delta[1]) + 2 * Y_LENGTH, Y_LENGTH),
-                                        fmod((spheres[n]->z) + 2 * Z_LENGTH, Z_LENGTH),
+                                        fmod((spheres[n]->z + delta[2]) + 2 * Z_LENGTH, Z_LENGTH),
                                         spheres[n]->r,
                                         spheres[n]->type
                                 },
@@ -215,7 +212,7 @@ void moveAttempt(Sphere **spheres)
         }
 }
 
-void initSCConfig(Sphere **sheres)
+void initSCConfig(Sphere **spheres)
 {
         /*
          * Function:    initSCConfig
@@ -223,19 +220,48 @@ void initSCConfig(Sphere **sheres)
          * Generates a simple cubic starting configuratin based on globally
          * defined parameters such as box size, number of particles and
          * particles radius
-         * NB: For now we assume the use of a signle radius for all particles
+         * NB: For now we assume the use of a single fixed radius for all
+         * particles
          *
          * **sheres:    pointer to the pointer to the table of particles data
          *
          */
 
+        int i = 0, j = 1, k = 1, l = 1;
+        double r = 0.5f, x = 0.0f, y = 0.0f, z = 0.0f;
+        double sizeup = ceil(pow(MAX_SIZE, 1.0f/3.0f));
+        if ( !(2 * r * (sizeup + 1) < X_LENGTH)
+             && !(2 * r * (sizeup + 1) < Y_LENGTH)
+             && !(2 * r * (sizeup + 1) < Z_LENGTH)
+           )    // Checks if all particles can fit inside the box
+        {
+                while (i < MAX_SIZE)
+                {
+                        for (j = 1; j < (int) sizeup; j++)
+                        {
+                                for (k = 1; k < (int) sizeup; k++)
+                                {
+                                        for (l = 1; l < (int) sizeup; l++)
+                                        {
+                                                *spheres[i] = (Sphere) {r * (1 + 2 * j),
+                                                r * (1 + 2 * k),
+                                                r * (1 + 2 * l),
+                                                r,
+                                                'a'};
+                                                i++;
+                                        }
+                                }
+                        }
+                }
+
+        }
 }
 
 void tuneStepSize(double *ptune, double *pAcceptanceRate)
 {
         /*
          * Function:    tuneStepSize
-         * -------------------------
+          * -------------------------
          * Tunes up the step size employed in trying to displace a particle by
          * 5% if the acceptance rate is < 30% and down by 5% if the latter is
          * < 30%
@@ -245,10 +271,10 @@ void tuneStepSize(double *ptune, double *pAcceptanceRate)
          *                      moving a particle in the system
          *
          */
-        if (acceptanceRate < 0.3)
-                ptune -= 0.05;
+        if (*pAcceptanceRate < 0.3)
+                *ptune -= 0.05;
         else
-                ptune += 0.05;
+                *ptune += 0.05;
 }
 
 int main(int argc, char *argv[])
@@ -263,18 +289,7 @@ int main(int argc, char *argv[])
         Sphere **pSpheres = malloc(MAX_SIZE * sizeof(Sphere));
         for (int i = 0; i < MAX_SIZE; ++i)
                 pSpheres[i] = spheres+i;
-       
-        /*
-        for (i = 0; i < 100; i++)
-        {
-                n = abs((int) (genrand() * MAX_SIZE));
-                if (overlapCheckGlobal(pSpheres, pSpheres[n], n))
-                        printf("There is no overlap ! (as should be) (also n = %d)\n", n);
-                else
-                        printf("There is overlap, and it shouldn't ... (also n = %d)\n", n);
 
-        }
-        */
 
         // Initialization of the spheres coordinates one by one
         /*
@@ -285,12 +300,12 @@ int main(int argc, char *argv[])
         */
 
         // Checks for moveAttempt()
-        readInit("init.sph", pSpheres);
+        readInit("SC_init.sph", pSpheres);
         writeCoords("coords.sph", pSpheres);
-        for (i = 0; i < 1000000; i++)
+        for (i = 0; i < 10000000; i++)
         {
                 moveAttempt(pSpheres);        
-                if (i % 1000 == 0)
+                if (i % 10000 == 0)
                         writeCoords("coords.sph", pSpheres);
         }
 
@@ -298,4 +313,3 @@ int main(int argc, char *argv[])
         free(pSpheres);
         return 0;
 }
-
